@@ -1,10 +1,17 @@
 ##############
 # Step 1 draw in data and process so that it can be used at a later stage
 ##############
-
-import pandas as pd
+import shutil
+import zipfile
 import requests
+import pandas as pd
+from io import BytesIO
+import geopandas as gp
 from io import StringIO
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+
 
 # URLs to make requests from
 BIKE_STATS_URL = 'https://cycling.data.tfl.gov.uk/usage-stats/'
@@ -133,18 +140,6 @@ health = health[health['sex'] == 'Persons']
 # Step 2 Create some maps using data collated at local authority level.
 ##############
 
-import shutil
-import zipfile
-import requests
-import pandas as pd
-from io import BytesIO
-import geopandas as gp
-
-import matplotlib
-
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-
 MAP_FILE_URL = "https://data.london.gov.uk/download/statistical-gis-boundary-files-london/9ba8c833-6370-4b11-abdc" \
                "-314aa020d5e0/statistical-gis-boundaries-london.zip "
 
@@ -176,9 +171,8 @@ def map_variable(data_frame, variable, title, annotation, save_name):
     ax.set_title(f'{title}', fontdict={'fontsize': '14', 'fontweight': '3'})
     ax.annotate(f'{annotation}', xy=(0.1, .08), xycoords='figure fraction', horizontalalignment='left',
                 verticalalignment='top', fontsize=10, color='#555555')
-    fig.savefig(f'{save_name}.png', dpi=300)
+    fig.savefig(f'pngs\{save_name}.png', dpi=300)
     plt.close()
-
 
 # Configure dataframe with london map data
 file_path = 'statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW'
@@ -198,7 +192,6 @@ bikes_la = pd.merge(map_df, la, left_on='gss_code', right_on='la_code', how='lef
 bikes_la['Bike Docks'] = bikes_la['Bike Docks'].fillna(0)
 map_variable(bikes_la, 'Bike Docks', 'Santander Cycles Bike Points in Inner London', 'Source: TfL unified API', 'Bike '
                                                                                                                 'docks')
-
 # Configure health data ready for merging
 # Refreshed list of indicators after filters
 indicators = list(health['indicator name'].unique())
@@ -276,7 +269,7 @@ ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 # Add annotation just outside the plot
 fig.text(0.1, 0.01, f'Source: public TfL data', ha='left', fontsize=10, color='#555555')
-fig.savefig('Trips by day.png', dpi=300)
+fig.savefig('pngs\Trips by day.png', dpi=300)
 plt.close()
 
 # Trips by hour
@@ -291,7 +284,7 @@ ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 # Add annotation just outside the plot
 fig.text(0.1, 0.01, f'Source: public TfL data', ha='left', fontsize=10, color='#555555')
-fig.savefig('Trips by hour.png', dpi=300)
+fig.savefig('pngs\Trips by hour.png', dpi=300)
 plt.close()
 
 # Trip Duration Histogram
@@ -307,6 +300,5 @@ axes.spines['top'].set_visible(False)
 axes.spines['right'].set_visible(False)
 # Add annotation just outside the plot
 fig.text(0.1, 0.05, f'Source: public TfL data', ha='left', fontsize=10, color='#555555')
-fig.savefig('Trip duration.png', dpi=300)
+fig.savefig('pngs\Trip duration.png', dpi=300)
 plt.close()
-
