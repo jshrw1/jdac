@@ -1,10 +1,19 @@
+import requests
+import matplotlib
+import numpy as np
+import pandas as pd
+import requests_cache
+import xgboost as xgb
 from io import StringIO
 import openmeteo_requests
-import pandas as pd
-import requests
-import requests_cache
+import matplotlib.pyplot as plt
 from retry_requests import retry
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV
 
+matplotlib.use('TkAgg')
 
 # Function to check the status of requests- If an error is found in the request the error code is printed
 def status_check(url):
@@ -22,7 +31,6 @@ def trip_data(url, file_list):
     dfs = []
     for url in url_list:
         data = status_check(url)
-        print('New Download Starting...')
         df = pd.read_csv(StringIO(data.text), low_memory=False)
         dfs.append(df)
     df = pd.concat(dfs, ignore_index=True)
@@ -109,8 +117,136 @@ weather['date'] = pd.to_datetime(weather['date'])
 weather.set_index('date', inplace=True)
 
 # Merged dataset - Trips and Weather
-merged_df = pd.merge(trips, weather, left_index=True, right_index=True)
+data = pd.merge(trips, weather, left_index=True, right_index=True)
+
+# Get the earliest and latest date in the dataset
+print("Earliest date in dataset: {}".format(min(data.index)))
+print("Latest date in dataset: {}".format(max(data.index)))
+
+# check for missing values and check for inconsistencies
+print(data.isnull().sum())
+summary = data.describe()
+
+#Plot som histograms to visualise
+fig, axs = plt.subplots(3, 3, figsize=(15, 10))
+axs = axs.ravel()
+for i, column in enumerate(data.columns):
+    axs[i].hist(data[column], bins=20)
+    axs[i].set_title('{} Distribution'.format(column))
+plt.subplots_adjust(hspace=0.5)
+plt.tight_layout()
+plt.show()
+
+# Explore weather data in more detail group data by weather_code and get the average cnt
+data_weather = data.groupby('weather_code')['trips'].mean()
+fig = plt.figure(figsize = (12,3))
+plt.bar(data_weather.index, data_weather.values)
+plt.xlabel('Weather Code')
+plt.ylabel('Average Number of Bikes Shared')
+plt.title('Number of Bikes Shared vs. Weather Code')
+plt.show()
+
+# Explore temperature in more detail
+t_bins = np.arange(-10.0, 40.0, 5.0)
+data["temp_bins"] = pd.cut(data["temperature_2m"], bins=t_bins)
+data["temp_bins"] = data["temp_bins"].apply(lambda x: x.right)
+temp_data = data.groupby('temp_bins')['trips'].mean()
+
+t_bins = np.arange(-10.0, 40.0, 5.0)
+data["a_temp_bins"] = pd.cut(data["apparent_temperature"], bins=t_bins)
+data["a_temp_bins"] = data["a_temp_bins"].apply(lambda x: x.right)
+a_temp_data = data.groupby('a_temp_bins')['trips'].mean()
+
+fig, ax = plt.subplots(figsize=(12, 3))
+ax.bar(temp_data.index, temp_data.values, width=0.7, label='Actual')
+ax.bar(a_temp_data.index.astype(float) + 0.7, a_temp_data.values, width=0.7, label='Feels Like')
+ax.set_xlabel('Temperature Bins (C)')
+ax.set_ylabel('Average Number of Bikes Shared')
+ax.set_title('Number of Bikes Shared vs. Acutal and Feels Like temperature Bins')
+ax.legend()
+plt.show()
+
+# Explore humidity
+hum_bins = np.arange(30.0, 110.0, 10.0)
+data["hum_bins"] = pd.cut(data["relative_humidity_2m"].astype(float), bins = hum_bins)
+data["hum_bins"] = data["hum_bins"].apply(lambda x: x.right)
+data_hum = data.groupby('hum_bins')['trips'].mean()
+
+fig = plt.figure(figsize = (12,3))
+plt.bar(data_hum.index, data_hum.values)
+plt.xlabel('Humidity %')
+plt.ylabel('Average Number of Bikes Shared')
+plt.title('Number of Bikes Shared vs. Humidity %')
+plt.xticks(hum_bins)
+plt.show()
+
+# Explore Wind Speed
+wind_speed_bins = np.arange(-5.0, 65.0, 5.0)
+data["wind_speed_bins"] = pd.cut(data["wind_speed_10m"], bins = wind_speed_bins)
+data["wind_speed_bins"] = data["wind_speed_bins"].apply(lambda x: x.right)
+data_wind_speed = data.groupby('wind_speed_bins')['trips'].mean()
 
 
-"https://www.kaggle.com/code/zhikchen/xgb-feature-engineering-bike-share-forecast"
+fig = plt.figure(figsize = (12,3))
+plt.bar(data_wind_speed.index, data_wind_speed.values)
+plt.xlabel('Wind Speed km/h')
+plt.ylabel('Average Number of Bikes Shared')
+plt.title('Number of Bikes Shared vs. Wind Speed km/h')
+plt.xticks(wind_speed_bins[1:])
+plt.show()
 
+# Explore daily trips
+fig = plt.figure(figsize = (12,3))
+plt.plot(data.index, data['trips'])
+plt.xlabel('Date')
+plt.ylabel('Number of Bikes Shared')
+plt.title('Number of Bikes Shared over time')
+plt.show()
+
+# Could do more data exploration - as time series exlement could look to decompose into seasonal adjustment
+# Existing EDA should suffice for demonstration - Build model
+# Remove binned samples for EDA
+data = data.drop(['temp_bins','a_temp_bins','hum_bins','wind_speed_bins'], axis=1)
+data['hour'] = data.index.hour
+data['dayofweek'] = data.index.dayofweek
+data['weekofyear'] = data.index.isocalendar().week
+data['month'] = data.index.month
+
+# Split the dataset into training and testing sets (80% train, 20% test)
+X = data.drop(['trips'], axis=1)
+y = data['trips']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Define xgboost model
+model = xgb.XGBRegressor()
+# Define the hyperparameters for tuning
+params = {
+    'n_estimators': [50, 100, 150],
+    'max_depth': [3, 4, 5],
+    'learning_rate': [0.1, 0.01, 0.001]
+}
+
+# perform hyperparameter tuning using gridsearch
+grid_search = GridSearchCV(model, params, cv=5, scoring='neg_mean_squared_error')
+grid_search.fit(X_train, y_train)
+model = grid_search.best_estimator_
+model.fit(X_train, y_train)
+
+# Model test
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mse)
+r_squared = r2_score(y_test, y_pred)
+
+print("MSE: {}".format(mse))
+print("RMSE: {}".format(rmse))
+print("R-Squared: {}".format(r_squared))
+
+# Plot estimator vs actual
+fig = plt.figure(figsize=(12,3))
+plt.plot(y_test.values, label='Actual')
+plt.plot(y_pred, label="Predictions", color="r")
+plt.ylabel('Number of Bikes Shared')
+plt.title('Number of Bikes Shared Predicted vs Actual')
+plt.legend()
+plt.show()
